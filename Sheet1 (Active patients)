@@ -1,0 +1,150 @@
+Option Explicit
+
+
+Sub CheckForCompleteAnnualReviewDatesOnNHR()
+
+    Call openWebsite("reviews")
+    
+End Sub
+
+
+Sub openWebsite(mode)
+
+    Dim ie As New SHDocVw.InternetExplorer
+                   
+    ie.Visible = True
+    ie.navigate "https://nww.mdsas.nhs.uk/nhrv2/Account/Login"
+    
+    Call WaitToLoad(ie)
+    
+    Call loginNHR(ie)
+    
+    If mode = "register" Then
+        Call LoopThruPatients(ie)
+    ElseIf mode = "reviews" Then
+        Call GetAnnualReviewDates(ie)
+    End If
+    
+End Sub
+
+
+'Loop through the active patient list to get all annual review dates registered on NHR
+Sub GetAnnualReviewDates(browserInstance)
+
+    Dim db As ListObject
+    Set db = ActiveSheet.ListObjects("Database")
+    
+    Dim reviewedPatients As Integer
+    Dim rw As Variant
+    For Each rw In db.DataBodyRange.Rows
+        Call GetDates(browserInstance, rw, reviewedPatients)
+    Next rw
+    
+    Dim msg As String
+    msg = CStr(reviewedPatients) & " patients have complete annual reviews on NHR."
+    MsgBox msg
+
+End Sub
+
+
+Sub GetDates(browserInstance, patient, reviewedPatients)
+    
+    browserInstance.navigate "https://nww.mdsas.nhs.uk/nhrv2/Patient/Register"
+    Call WaitToLoad(browserInstance)
+    
+    browserInstance.document.getElementById("registerPatientNHSNumber").Value = patient.Cells(4)
+    
+    browserInstance.document.getElementById("RegisterPatient_DateOfBirth").Value = Format(patient.Cells(5), "dd/mm/yyyy")
+    browserInstance.document.getElementById("RegisterPatient_Forename").Value = patient.Cells(1)
+    browserInstance.document.getElementById("RegisterPatient_Surname").Value = patient.Cells(2)
+    
+    If patient.Cells(6) = "Male" Then
+        browserInstance.document.getElementById("RegisterPatient_GenderId").Value = "1"
+    ElseIf patient.Cells(6) = "Female" Then
+        browserInstance.document.getElementById("RegisterPatient_GenderId").Value = "2"
+    End If
+     
+    browserInstance.document.querySelector("a[href='#next']").Click
+    Call WaitToLoad(browserInstance)
+    
+    browserInstance.document.querySelector("a[href='#previous']").Click
+    Call WaitToLoad(browserInstance)
+    
+    If Not IsObject(browserInstance.document.getElementById("registerPatientNHSNumber-error")) Then
+        Exit Sub
+    Else
+        browserInstance.document.querySelector("a[href^='/nhrv2/Patient/Summary']").Click
+        Application.Wait Now + TimeValue("00:00:02")
+        
+        patient.Cells(17) = browserInstance.document.getElementsByClassName("ml-auto")(11).innerText
+        
+        'Get latest annual review date
+        browserInstance.document.querySelector("a[href$='/AnnualReviews/List']").Click
+        Application.Wait Now + TimeValue("00:00:01")
+        If Not IsObject(browserInstance.document.querySelector("td[class='dataTables_empty']")) Then
+            
+            If Trim(browserInstance.document.getElementsByTagName("td")(2).innerText) = "Complete" Then
+                patient.Cells(15) = browserInstance.document.getElementsByTagName("td")(1).innerText
+                
+                browserInstance.document.querySelector("a[href*='/AnnualReviews/Edit']").Click
+                Application.Wait Now + TimeValue("00:00:01")
+                
+                'Get AR date in UK format
+                Dim DateOfReview As Variant
+                Dim yr As Integer
+                Dim mo As Integer
+                Dim dy As Integer
+                DateOfReview = browserInstance.document.getElementById("DateOfReview").Value
+                yr = Year(DateOfReview)
+                mo = Month(DateOfReview)
+                dy = Day(DateOfReview)
+                DateOfReview = CDbl(DateSerial(yr, mo, dy))
+                If CDbl(patient.Cells(14)) <> DateOfReview Then
+                    patient.Cells(14) = DateOfReview
+                End If
+    '            patient.Cells(15) = browserInstance.document.getElementById("select2-CentreId-container").innerText
+                reviewedPatients = reviewedPatients + 1
+            
+            End If
+                        
+        End If
+        
+        Exit Sub
+    End If
+        
+End Sub
+
+
+Sub loginNHR(browserInstance)
+
+    browserInstance.document.getElementById("Username").Value = "ENTER YOUR USERNAME"
+    browserInstance.document.getElementById("Password").Value = "ENTER YOUR PASSWORD"
+    browserInstance.document.querySelector("button[type='submit'][data-cy='login-sign-in']").Click
+    
+    'Call WaitToLoad(ie)
+    
+    'The Pin element is not found on the page for some reason even after loading
+    Do While Not IsObject(browserInstance.document.getElementById("Pin"))
+        Application.Wait Now + TimeValue("00:00:01")
+    Loop
+    
+    browserInstance.document.getElementById("Pin").Value = "ENTER YOUR PIN"
+    browserInstance.document.querySelector("button[type='submit']").Click
+    
+    Application.Wait Now + TimeValue("00:00:02")
+    
+    If IsObject(browserInstance.document.getElementById("Password")) Then
+        Call loginNHR(browserInstance)
+    End If
+
+End Sub
+
+
+Sub WaitToLoad(browserInstance)
+
+    Do While browserInstance.ReadyState <> READYSTATE_COMPLETE
+        Application.Wait Now + TimeValue("00:00:01")
+        DoEvents
+    Loop
+    
+End Sub
